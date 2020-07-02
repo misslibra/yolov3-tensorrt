@@ -207,11 +207,16 @@ class WeightLoader(object):
         """
         initializer = list()
         inputs = list()
+        ## by miss libra : for yolov3 weight file dict order, conv weight always go first, and then maybe  bias or else bn scale,and
+        ## then bn bias and so on. so I change the read weight order this way
+        conv_init, conv_input = self._create_param_tensors(conv_params, 'conv', 'weights')
+        initializer.append(conv_init)
+        inputs.append(conv_input)
         if conv_params.batch_normalize:
-            bias_init, bias_input = self._create_param_tensors(
-                conv_params, 'bn', 'bias')
             bn_scale_init, bn_scale_input = self._create_param_tensors(
                 conv_params, 'bn', 'scale')
+            bias_init, bias_input = self._create_param_tensors(
+                conv_params, 'bn', 'bias')
             bn_mean_init, bn_mean_input = self._create_param_tensors(
                 conv_params, 'bn', 'mean')
             bn_var_init, bn_var_input = self._create_param_tensors(
@@ -225,10 +230,6 @@ class WeightLoader(object):
                 conv_params, 'conv', 'bias')
             initializer.append(bias_init)
             inputs.append(bias_input)
-        conv_init, conv_input = self._create_param_tensors(
-            conv_params, 'conv', 'weights')
-        initializer.append(conv_init)
-        inputs.append(conv_input)
         return initializer, inputs
 
     def _open_weights_file(self, weights_file_path):
@@ -311,6 +312,7 @@ class GraphBuilderONNX(object):
         self.alpha_lrelu = 0.1
         self.param_dict = OrderedDict()
         self.major_node_specs = list()
+        self.temp_major_node_specs_for_route = list()
         self.batch_size = 1
 
     def build_onnx_graph(
@@ -332,6 +334,7 @@ class GraphBuilderONNX(object):
             major_node_specs = self._make_onnx_node(layer_name, layer_dict)
             if major_node_specs.name is not None:
                 self.major_node_specs.append(major_node_specs)
+                self.temp_major_node_specs_for_route = self.major_node_specs##add by miss libra
         outputs = list()
         for tensor_name in self.output_tensors.keys():
             output_dims = [self.batch_size, ] + \
@@ -429,7 +432,8 @@ class GraphBuilderONNX(object):
         to previous element)
         """
         previous_node = None
-        for node in self.major_node_specs[target_index::-1]:
+        #for node in self.major_node_specs[target_index::-1]: ## comment by miss libra
+        for node in self.temp_major_node_specs_for_route[target_index::-1]:
             if node.created_onnx_node:
                 previous_node = node
                 break
@@ -562,7 +566,10 @@ class GraphBuilderONNX(object):
             assert split_index < 0
             # Increment by one because we skipped the YOLO layer:
             split_index += 1
-            self.major_node_specs = self.major_node_specs[:split_index]
+            ## by misslibra : cutting self.major_node_specs may cause error when route node exists in the part to be cut,
+            ## error happen when to find previous node with wrong index for next route. so keep the complete self.major_node_specs
+            #self.major_node_specs = self.major_node_specs[:split_index]
+            self.temp_major_node_specs_for_route = self.major_node_specs[:split_index]
             layer_name = None
             channels = None
         else:
